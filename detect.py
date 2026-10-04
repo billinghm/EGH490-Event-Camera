@@ -3,12 +3,15 @@
 Run YOLOv8 over a video or a folder of event frames, write an annotated
 video and a CSV of detections.
 
-Frame video, native and downscaled to match the event camera:
-    python detect.py clip.mp4
-    python detect.py clip.mp4 --downscale 320 --grey
+Inputs are looked up in recordings/ if not found as given. Outputs go to
+results/<name>/, one file pair per setting:
 
-Event frames from export_events.py (pass the export folder):
-    python detect.py events_w20ms_grey
+    python detect.py ball.mp4
+        -> results/ball/native_yolov8l.mp4, .csv
+    python detect.py ball.mp4 --downscale 320 --grey
+        -> results/ball/320_grey_yolov8l.mp4, .csv
+    python detect.py 80_balls_w20ms_grey      (an export_events.py folder)
+        -> results/80_balls_w20ms_grey/native_yolov8l.mp4, .csv
 
 Video input is centre-cropped to a square first, so field of view is
 identical between runs and only resolution changes.
@@ -22,6 +25,20 @@ import cv2
 from ultralytics import YOLO
 
 TARGETS = {"sports ball", "bottle"}
+ROOT = Path(__file__).resolve().parent
+RECORDINGS = ROOT / "recordings"
+RESULTS = ROOT / "results"
+
+
+def find_input(name):
+    """Use the path as given if it exists, otherwise look in recordings/."""
+    p = Path(name)
+    if p.exists():
+        return p
+    q = RECORDINGS / name
+    if q.exists():
+        return q
+    raise SystemExit(f"can't find {name} (also looked in {RECORDINGS})")
 
 
 def open_source(path):
@@ -78,7 +95,7 @@ def prep(frame, size, grey):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("video")
-    ap.add_argument("--model", default="yolov8n.pt",
+    ap.add_argument("--model", default="yolov8l.pt",
                     help="yolov8n/s/m/l/x.pt - downloads on first use")
     ap.add_argument("--downscale", type=int, default=0,
                     help="resize the square crop to NxN, e.g. 320")
@@ -88,13 +105,15 @@ def main():
                     help="log every COCO class, not just ball and bottle")
     args = ap.parse_args()
 
-    tag = f"{args.downscale or 'native'}{'_grey' if args.grey else ''}"
-    stem = Path(args.video).stem
-    out_video = f"{stem}_{tag}.mp4"
-    out_csv = f"{stem}_{tag}.csv"
+    src = find_input(args.video)
+    tag = f"{args.downscale or 'native'}{'_grey' if args.grey else ''}_{Path(args.model).stem}"
+    out_dir = RESULTS / src.stem
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_video = out_dir / f"{tag}.mp4"
+    out_csv = out_dir / f"{tag}.csv"
 
     model = YOLO(args.model)
-    source, fps = open_source(args.video)
+    source, fps = open_source(src)
 
     writer = None
     rows = []
@@ -123,7 +142,7 @@ def main():
         if writer is None:
             h, w = annotated.shape[:2]
             writer = cv2.VideoWriter(
-                out_video, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
+                str(out_video), cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
         writer.write(annotated)
         frame_idx += 1
 
